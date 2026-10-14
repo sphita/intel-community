@@ -1,0 +1,45 @@
+# Data directories & datasets (DO NOT COMMIT)
+raw/
+processed/
+*.parquet
+*.jsonl
+
+# Pipeline state & runtime cache files
+.sorter_state.json
+.upload_state.json
+.modified_chunks.json
+last_sync_time.txt
+a.txt
+
+# Rust build artifacts
+target/
+**/target/
+Cargo.lock.orig
+
+# Python artifacts & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# Secrets & local environment variables
+.env
+.env.*
+!.env.example
+cmd_for_up.txt
+*.token
+*.key
+*.pem
+
+# Editor & OS artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

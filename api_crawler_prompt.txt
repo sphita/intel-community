@@ -1,0 +1,22 @@
+**Project Goal**: Build a blazing fast, Rust-based JSON API crawler targeting the Khoros/Lithium 2.0 API.
+
+**Context**: 
+In a previous session, we discovered that `community.intel.com` is running on Khoros (Lithium) and leaves its `api/2.0` endpoints wide open. 
+Scraping the HTML directly was causing IP bans from Cloudflare and forcing us to rely on heavy, slow Headless Chrome fallbacks to bypass JS rendering. 
+We need to abandon the HTML scraper and build a pure JSON API crawler using `reqwest` and `tokio`.
+
+**The Target API**:
+The API uses a SQL-like syntax in the query parameter (LiQL - Lithium Query Language).
+Example endpoint: `https://community.intel.com/api/2.0/search?q=SELECT+*+FROM+messages+LIMIT+100+OFFSET+0`
+
+**Requirements**:
+1. **Language/Framework**: Rust, utilizing `tokio` for async multi-threading and `reqwest` for HTTP requests.
+2. **Architecture**: 
+   - Use a multi-worker pool that paginates through the API using LiQL (`LIMIT` and `OFFSET`).
+   - Parse the JSON responses (`{"status":"success","data":{"items":[...]}}`) into strongly typed Rust structs using `serde`.
+   - Implement a rate limiter to stay under Cloudflare's WAF radar (e.g., max 5 requests per second).
+3. **Data Storage**: Dump the raw JSON message objects directly into chunked `.jsonl` files (e.g., `messages_chunk_001.jsonl`).
+4. **Resilience**: If the API returns a Cloudflare 429 or 1015, the worker should gracefully sleep and retry with exponential backoff.
+
+Please write the full Rust implementation, including `Cargo.toml` dependencies, and provide instructions on how to run it.
+

@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# intel — Intel Dataset Pipeline CLI
+# ─────────────────────────────────────────────────────────────────────────────
+# Usage: just run ./intel and follow the prompt
+#
+#   1   → Fetch new messages only   (delta sync from Intel API)
+#   12  → Fetch + Sort              (delta sync → group into discussions)
+#   123 → Fetch + Sort + Upload     (full pipeline → push to HuggingFace)
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIPELINE="$BASE/pipeline.py"
+VENV_CARGO="cargo"
+CRAWLER_DIR="$BASE/api_crawler"
+
+# ── Python interpreter discovery ──────────────────────────────────────────────
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python3" ]; then
+  PYTHON="$VIRTUAL_ENV/bin/python3"
+elif [ -x "$HOME/.venv/bin/python3" ]; then
+  PYTHON="$HOME/.venv/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="$(command -v python3)"
+else
+  echo "Error: Python 3 not found." >&2
+  exit 1
+fi
+
+# ── Environment & HuggingFace credentials ─────────────────────────────────────
+if [ -f "$BASE/.env" ]; then
+  # shellcheck disable=SC1091
+  set -a
+  source "$BASE/.env"
+  set +a
+fi
+
+export HF_DATASET_ID="${HF_DATASET_ID:-sphita/intel-community}"
+
+check_hf_token() {
+  if [ -z "${HF_TOKEN:-}" ]; then
+    echo -e "${RED}❌ HF_TOKEN environment variable not set.${RESET}"
+    echo -e "   Please export it (export HF_TOKEN=hf_...) or set it in $BASE/.env"
+    exit 1
+  fi
+}
+
+# ── Bridge: Convert delta JSONL → Parquet in raw/ ────────────────────────────
+convert_delta() {
+  local JSONL="$CRAWLER_DIR/delta_updates.jsonl"
+  if [ -f "$JSONL" ] && [ -s "$JSONL" ]; then
+    echo -e "  ${DIM}Converting delta_updates.jsonl → Parquet...${RESET}"
+    "$PYTHON" -c "
+import os, json, time
+import pandas as pd
+
+jsonl = '$JSONL'
+raw_dir = '$BASE/raw'
+records = []
+with open(jsonl, 'r') as f:
+    for line in f:
+        if line.strip():
+            records.append(json.loads(line))
+if not records:
+    exit(0)
+df = pd.DataFrame(records)
+for col in df.columns:
+    if df[col].apply(lambda x: isinstance(x, (dict, list))).any():
+        df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
+ts = time.strftime('%Y%m%d_%H%M%S')
+out = os.path.join(raw_dir, f'delta_updates_{ts}.parquet')
+df.to_parquet(out, engine='pyarrow', compression='snappy', index=False)
+print(f'  Saved {len(records)} messages to {os.path.basename(out)}')
+os.remove(jsonl)
+"
+  fi
+}
+
+# ── Colors ──────────────────────────────────────────────────────────────────
+BOLD="\033[1m"
+CYAN="\033[1;36m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+RED="\033[1;31m"
+DIM="\033[2m"
+RESET="\033[0m"
+
+clear
+echo ""
+echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════╗${RESET}"
+echo -e "${CYAN}${BOLD}║       Intel Dataset Pipeline — Command Center        ║${RESET}"
+echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════╝${RESET}"
+echo ""
+
+# ── Show quick stats ─────────────────────────────────────────────────────────
+RAW_COUNT=$(ls "$BASE/raw/"*.parquet 2>/dev/null | wc -l || echo 0)
+PROC_COUNT=$(ls "$BASE/processed/"*.parquet 2>/dev/null | wc -l || echo 0)
+SYNC_TIME=""
+if [ -f "$CRAWLER_DIR/last_sync_time.txt" ]; then
+    SYNC_TIME=$(cat "$CRAWLER_DIR/last_sync_time.txt")
+fi
+
+echo -e "  ${DIM}Raw chunks      : ${RESET}${BOLD}$RAW_COUNT${RESET}"
+echo -e "  ${DIM}Processed chunks: ${RESET}${BOLD}$PROC_COUNT${RESET}"
+if [ -n "$SYNC_TIME" ]; then
+echo -e "  ${DIM}Last delta sync : ${RESET}${BOLD}$SYNC_TIME${RESET}"
+fi
+echo ""
+echo -e "  ${DIM}─────────────────────────────────────────────────────${RESET}"
+echo ""
+echo -e "  ${BOLD}1${RESET}   →  ${GREEN}Fetch${RESET}            Pull new messages from Intel API"
+echo -e "  ${BOLD}12${RESET}  →  ${GREEN}Fetch + Sort${RESET}     Group messages into discussions"
+echo -e "  ${BOLD}123${RESET} →  ${GREEN}Fetch + Sort + Upload${RESET}  Full pipeline to HuggingFace"
+echo ""
+echo -e "  ${DIM}─────────────────────────────────────────────────────${RESET}"
+echo -e "  ${BOLD}s${RESET}   →  Stats"
+echo -e "  ${BOLD}u${RESET}   →  Upload only (no fetch)"
+echo -e "  ${BOLD}q${RESET}   →  Quit"
+echo ""
+echo -ne "${CYAN}${BOLD}  Enter choice: ${RESET}"
+read -r CHOICE
+
+echo ""
+
+case "$CHOICE" in
+
+  "1")
+    echo -e "${YELLOW}${BOLD}▶ Step 1/1 — Fetching new messages from Intel...${RESET}"
+    echo ""
+    (cd "$CRAWLER_DIR" && $VENV_CARGO run --release --bin delta_sync)
+    convert_delta
+    echo ""
+    echo -e "${DIM}   Run with '12' next to sort them into discussions.${RESET}"
+    ;;
+
+  "12")
+    echo -e "${YELLOW}${BOLD}▶ Step 1/2 — Fetching new messages from Intel...${RESET}"
+    echo ""
+    (cd "$CRAWLER_DIR" && $VENV_CARGO run --release --bin delta_sync)
+    convert_delta
+    echo ""
+    echo ""
+    "$PYTHON" "$BASE/sorter.py"
+    echo ""
+    echo -e "${GREEN}${BOLD}✅ Fetch + Sort complete!${RESET}"
+    echo -e "${DIM}   Run with '123' next time to also push to HuggingFace.${RESET}"
+    ;;
+
+  "123")
+    check_hf_token
+    echo -e "${YELLOW}${BOLD}▶ Step 1/3 — Fetching new messages from Intel...${RESET}"
+    echo ""
+    (cd "$CRAWLER_DIR" && $VENV_CARGO run --release --bin delta_sync)
+    convert_delta
+    echo ""
+    echo ""
+    "$PYTHON" "$BASE/sorter.py"
+    echo ""
+    echo -e "${YELLOW}${BOLD}▶ Step 3/3 — Uploading to HuggingFace...${RESET}"
+    echo ""
+    "$PYTHON" "$BASE/uploader.py"
+    echo ""
+    echo -e "${GREEN}${BOLD}✅ Full pipeline complete! Dataset is live on HuggingFace.${RESET}"
+    ;;
+
+  "s"|"S")
+    echo ""
+    "$PYTHON" "$PIPELINE" stats
+    ;;
+
+  "u"|"U")
+    check_hf_token
+    echo -e "${YELLOW}${BOLD}▶ Uploading processed chunks to HuggingFace...${RESET}"
+    echo ""
+    "$PYTHON" "$BASE/uploader.py"
+    echo ""
+    echo -e "${GREEN}${BOLD}✅ Upload complete!${RESET}"
+    ;;
+
+  "q"|"Q")
+    echo -e "${DIM}  Bye!${RESET}"
+    echo ""
+    ;;
+
+  *)
+    echo -e "${RED}❌ Unknown choice '${CHOICE}'. Valid options: 1, 12, 123, s, u, q${RESET}"
+    echo ""
+    exit 1
+    ;;
+
+esac
+
+echo ""
