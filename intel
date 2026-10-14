@@ -85,7 +85,7 @@ RED="\033[1;31m"
 DIM="\033[2m"
 RESET="\033[0m"
 
-clear
+clear 2>/dev/null || true
 echo ""
 echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════╗${RESET}"
 echo -e "${CYAN}${BOLD}║       Intel Dataset Pipeline — Command Center        ║${RESET}"
