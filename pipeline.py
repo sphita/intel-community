@@ -87,16 +87,57 @@ def cmd_upload(force=False, status=False):
     run(cmd)
 
 
+def convert_delta():
+    """Convert delta_updates.jsonl into a compressed Parquet chunk in raw/."""
+    jsonl_path = os.path.join(CRAWLER_DIR, "delta_updates.jsonl")
+    if not (os.path.exists(jsonl_path) and os.path.getsize(jsonl_path) > 0):
+        return
+
+    import time
+    import pandas as pd
+
+    records = []
+    with open(jsonl_path, "r") as f:
+        for line in f:
+            if line.strip():
+                records.append(json.loads(line))
+    if not records:
+        return
+
+    df = pd.DataFrame(records)
+    for col in df.columns:
+        if df[col].apply(lambda x: isinstance(x, (dict, list))).any():
+            df[col] = df[col].apply(lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x)
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    out_path = os.path.join(RAW_DIR, f"delta_updates_{ts}.parquet")
+    df.to_parquet(out_path, engine="pyarrow", compression="snappy", index=False)
+    print(f"  Saved {len(records)} messages to {os.path.basename(out_path)}")
+    os.remove(jsonl_path)
+
+
+def cmd_readme(upload=False):
+    """Recompute dataset metrics and sync README.md."""
+    print("📝 Syncing README.md stats, tokens, and documentation...")
+    cmd = [VENV_PYTHON, os.path.join(BASE_DIR, "update_readme.py")]
+    if upload:
+        cmd.append("--upload")
+    run(cmd)
+
+
 def cmd_delta():
-    """Fetch new messages from Intel API → sort → upload."""
+    """Fetch new messages from Intel API → sort → upload → sync README."""
     print("🔄 Delta Sync: Fetching new messages from Intel Community...")
     run([CARGO, "run", "--release", "--bin", "delta_sync"], cwd=CRAWLER_DIR)
+    convert_delta()
     print()
     print("📦 Sorting new delta messages into discussions...")
     run([VENV_PYTHON, os.path.join(BASE_DIR, "sorter.py")])
     print()
     print("🚀 Uploading updated chunks to HuggingFace...")
     run([VENV_PYTHON, os.path.join(BASE_DIR, "uploader.py")])
+    print()
+    cmd_readme(upload=True)
 
 
 def cmd_run():
@@ -104,6 +145,8 @@ def cmd_run():
     cmd_sort()
     print()
     cmd_upload()
+    print()
+    cmd_readme(upload=True)
 
 
 def main():
@@ -117,8 +160,11 @@ def main():
     p_upload.add_argument("--force",  action="store_true")
     p_upload.add_argument("--status", action="store_true")
 
-    subparsers.add_parser("run",   help="Sort + Upload (full pipeline)")
-    subparsers.add_parser("delta", help="Fetch deltas → Sort → Upload")
+    p_readme = subparsers.add_parser("readme", help="Update and sync dataset README.md")
+    p_readme.add_argument("--upload", action="store_true", help="Upload README to Hugging Face")
+
+    subparsers.add_parser("run",   help="Sort + Upload + Sync README (full pipeline)")
+    subparsers.add_parser("delta", help="Fetch deltas → Sort → Upload → Sync README")
     subparsers.add_parser("stats", help="Show pipeline statistics")
 
     args = parser.parse_args()
@@ -127,6 +173,8 @@ def main():
         cmd_sort(force=args.force)
     elif args.command == "upload":
         cmd_upload(force=args.force, status=args.status)
+    elif args.command == "readme":
+        cmd_readme(upload=args.upload)
     elif args.command == "run":
         cmd_run()
     elif args.command == "delta":

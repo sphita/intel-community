@@ -114,6 +114,7 @@ echo -e "  ${BOLD}123${RESET} →  ${GREEN}Fetch + Sort + Upload${RESET}  Full p
 echo ""
 echo -e "  ${DIM}─────────────────────────────────────────────────────${RESET}"
 echo -e "  ${BOLD}s${RESET}   →  Stats"
+echo -e "  ${BOLD}r${RESET}   →  Sync README (metrics + tokens + card)"
 echo -e "  ${BOLD}u${RESET}   →  Upload only (no fetch)"
 echo -e "  ${BOLD}q${RESET}   →  Quit"
 echo ""
@@ -160,7 +161,15 @@ case "$CHOICE" in
     echo ""
     "$PYTHON" "$BASE/uploader.py"
     echo ""
+    echo -e "${YELLOW}${BOLD}▶ Syncing and uploading dataset README...${RESET}"
+    "$PYTHON" "$BASE/update_readme.py" --upload
+    echo ""
     echo -e "${GREEN}${BOLD}✅ Full pipeline complete! Dataset is live on HuggingFace.${RESET}"
+    ;;
+
+  "r"|"R")
+    echo ""
+    "$PYTHON" "$BASE/update_readme.py" --upload
     ;;
 
   "s"|"S")
@@ -173,6 +182,8 @@ case "$CHOICE" in
     echo -e "${YELLOW}${BOLD}▶ Uploading processed chunks to HuggingFace...${RESET}"
     echo ""
     "$PYTHON" "$BASE/uploader.py"
+    echo ""
+    "$PYTHON" "$BASE/update_readme.py" --upload
     echo ""
     echo -e "${GREEN}${BOLD}✅ Upload complete!${RESET}"
     ;;
